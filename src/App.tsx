@@ -6,6 +6,10 @@ import {
   Sparkles, History, MessageSquare, X, Info, Eye
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
@@ -56,6 +60,15 @@ export default function App() {
   
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
+    }
+  }, [input])
 
   // Initial load
   useEffect(() => {
@@ -179,6 +192,20 @@ export default function App() {
       setIsQuerying(false)
     }
   }
+
+  const handleSuggestion = (prompt: string) => {
+    setInput(prompt)
+    if (textareaRef.current) {
+      textareaRef.current.focus()
+    }
+  }
+
+  const suggestions = [
+    { title: "Summarize PDF", icon: <FileText className="w-4 h-4" />, prompt: "Can you provide a concise summary of the selected document?" },
+    { title: "Key Takeaways", icon: <Info className="w-4 h-4" />, prompt: "What are the top 3 most important points in this information?" },
+    { title: "Explain Simply", icon: <Sparkles className="w-4 h-4" />, prompt: "Explain the main concepts here as if I am a beginner." },
+    { title: "Check Citations", icon: <BookOpen className="w-4 h-4" />, prompt: "What are the specific sources for the claims made in this document?" }
+  ]
 
   const selectedDoc = documents.find(d => d.id === selectedDocId)
   const viewingDoc = documents.find(d => d.id === viewingDocId)
@@ -402,14 +429,35 @@ export default function App() {
             className="flex-1 overflow-y-auto px-8 py-8 space-y-10"
           >
             {messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center opacity-30 mt-[-2rem]">
-                <div className="w-20 h-20 bg-primary/10 rounded-[2rem] flex items-center justify-center mb-6 border border-primary/20">
-                  <Search className="w-10 h-10 text-primary" />
-                </div>
-                <h3 className="text-2xl font-bold text-white mb-3">Ask anything</h3>
-                <p className="max-w-md text-sm text-slate-400 leading-relaxed px-6">
-                  Select documents from your library to provide specialized context, or query the global knowledge base. I'll provide verified answers with cited sources.
+              <div className="h-full flex flex-col items-center justify-center text-center mt-[-2rem]">
+                <motion.div 
+                  initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                  className="w-20 h-20 bg-primary/10 rounded-[2.5rem] flex items-center justify-center mb-8 border border-primary/20 shadow-2xl shadow-primary/20"
+                >
+                  <Sparkles className="w-10 h-10 text-primary" />
+                </motion.div>
+                <h3 className="text-3xl font-bold text-white mb-4 tracking-tight">How can I help you today?</h3>
+                <p className="max-w-md text-sm text-slate-500 leading-relaxed px-6 mb-10">
+                  Ask me anything about your library, or start a general conversation. I'm here to analyze your data with ChatGPT-level intelligence.
                 </p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl w-full px-4">
+                  {suggestions.map((s, i) => (
+                    <motion.button
+                      key={i}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.1 }}
+                      onClick={() => handleSuggestion(s.prompt)}
+                      className="flex items-center gap-3 p-4 bg-white/[0.03] border border-white/[0.08] rounded-2xl hover:bg-white/[0.06] hover:border-primary/40 transition-all text-left group"
+                    >
+                      <div className="p-2 bg-white/[0.05] rounded-xl group-hover:text-primary transition-colors">
+                        {s.icon}
+                      </div>
+                      <span className="text-xs font-semibold text-slate-300 group-hover:text-white">{s.title}</span>
+                    </motion.button>
+                  ))}
+                </div>
               </div>
             ) : (
               messages.map((msg, idx) => (
@@ -423,12 +471,46 @@ export default function App() {
                   )}
                 >
                   <div className={cn(
-                    "max-w-[80%] px-6 py-4 rounded-[1.8rem] text-sm leading-7 shadow-2xl",
+                    "max-w-[85%] px-6 py-4 rounded-[1.8rem] text-sm leading-relaxed shadow-2xl overflow-hidden",
                     msg.role === 'user' 
                       ? "bg-primary text-white border border-primary-dark/30 rounded-tr-none" 
-                      : "bg-[#111] border border-white/[0.08] text-slate-100 rounded-tl-none font-medium"
+                      : "bg-[#111] border border-white/[0.08] text-slate-100 rounded-tl-none font-medium prose prose-invert prose-sm max-w-none"
                   )}>
-                    {msg.content}
+                    {msg.role === 'assistant' ? (
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          code({ node, inline, className, children, ...props }: any) {
+                            const match = /language-(\w+)/.exec(className || '')
+                            return !inline && match ? (
+                              <SyntaxHighlighter
+                                children={String(children).replace(/\n$/, '')}
+                                style={vscDarkPlus as any}
+                                language={match[1]}
+                                PreTag="div"
+                                className="rounded-xl !bg-[#0a0a0a] !p-4 border border-white/5 my-4"
+                                {...props}
+                              />
+                            ) : (
+                              <code className={cn("bg-white/10 px-1.5 py-0.5 rounded text-primary-light", className)} {...props}>
+                                {children}
+                              </code>
+                            )
+                          },
+                          p: ({ children }) => <p className="mb-4 last:mb-0">{children}</p>,
+                          ul: ({ children }) => <ul className="list-disc pl-5 mb-4 space-y-1">{children}</ul>,
+                          ol: ({ children }) => <ol className="list-decimal pl-5 mb-4 space-y-1">{children}</ol>,
+                          li: ({ children }) => <li className="marker:text-primary">{children}</li>,
+                          h1: ({ children }) => <h1 className="text-lg font-bold mb-4 text-white">{children}</h1>,
+                          h2: ({ children }) => <h2 className="text-base font-bold mb-3 text-white">{children}</h2>,
+                          h3: ({ children }) => <h3 className="text-sm font-bold mb-2 text-white">{children}</h3>,
+                        }}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+                    ) : (
+                      msg.content
+                    )}
                   </div>
                   
                   <AnimatePresence>
@@ -479,19 +561,26 @@ export default function App() {
                 {error}
               </motion.div>
             )}
-            <form onSubmit={handleQuery} className="relative max-w-5xl mx-auto">
-              <input 
-                type="text"
+            <form onSubmit={handleQuery} className="relative max-w-5xl mx-auto group/form">
+              <textarea 
+                ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleQuery(e as any)
+                  }
+                }}
                 placeholder={selectedDocId ? `Query ${selectedDoc?.filename}...` : "Ask Antigravity anything..."}
-                className="w-full bg-white/[0.03] border border-white/[0.1] rounded-[2rem] py-5 pl-8 pr-20 focus:outline-none focus:ring-4 focus:ring-primary/20 focus:border-primary/50 focus:bg-white/[0.05] transition-all text-sm font-medium placeholder:text-slate-600 shadow-inner"
+                rows={1}
+                className="w-full bg-white/[0.03] border border-white/[0.1] rounded-[1.5rem] py-4 pl-8 pr-20 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50 focus:bg-white/[0.05] transition-all text-sm font-medium placeholder:text-slate-600 shadow-inner resize-none min-h-[60px] max-h-[200px]"
                 disabled={isQuerying}
               />
               <button 
                 type="submit"
                 disabled={isQuerying || !input.trim()}
-                className="absolute right-3 top-3 bottom-3 aspect-square bg-primary hover:bg-primary-dark text-white rounded-2xl transition-all disabled:opacity-20 disabled:hover:bg-primary shadow-lg shadow-primary/20 active:scale-90 flex items-center justify-center group"
+                className="absolute right-3 bottom-3 aspect-square h-10 bg-primary hover:bg-primary-dark text-white rounded-xl transition-all disabled:opacity-20 disabled:hover:bg-primary shadow-lg shadow-primary/20 active:scale-90 flex items-center justify-center group"
               >
                 <Send className="w-5 h-5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
               </button>
