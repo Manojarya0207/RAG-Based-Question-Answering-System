@@ -58,10 +58,23 @@ export default function App() {
   const [viewingDocId, setViewingDocId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null)
   
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-dismiss notification
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [notification])
+
+  const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setNotification({ message, type })
+  }
 
   // Auto-resize textarea
   useEffect(() => {
@@ -119,14 +132,19 @@ export default function App() {
 
     setIsUploading(true)
     setError(null)
+    showNotification(`Uploading ${file.name}...`, 'info')
+    
     const formData = new FormData()
     formData.append('file', file)
 
     try {
       await api.post('/upload', formData)
+      showNotification("Upload successful. Processing...", 'success')
       fetchDocuments()
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Upload failed")
+      const msg = err.response?.data?.detail || "Upload failed"
+      setError(msg)
+      showNotification(msg, 'error')
     } finally {
       setIsUploading(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -134,21 +152,30 @@ export default function App() {
   }
 
   const handleDelete = async (id: string) => {
+    const doc = documents.find(d => d.id === id)
     try {
       await api.delete(`/documents/${id}`)
       setDocuments(prev => prev.filter(d => d.id !== id))
       if (selectedDocId === id) setSelectedDocId(null)
       if (viewingDocId === id) setViewingDocId(null)
+      showNotification(`Deleted ${doc?.filename || 'document'}`, 'success')
     } catch (err) {
       console.error("Delete failed", err)
+      showNotification("Failed to delete document", 'error')
     }
   }
 
   const handleClearHistory = () => {
     setIsClearing(true)
     api.post('/history/clear')
-      .then(() => setMessages([]))
-      .catch(err => console.error("History clear failed", err))
+      .then(() => {
+        setMessages([])
+        showNotification("Chat history cleared", 'success')
+      })
+      .catch(err => {
+        console.error("History clear failed", err)
+        showNotification("Failed to clear history", 'error')
+      })
       .finally(() => setIsClearing(false))
   }
 
@@ -207,6 +234,28 @@ export default function App() {
 
   return (
     <div className="chat-container">
+      {/* Notifications Overlay */}
+      <AnimatePresence>
+        {notification && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, x: '-50%' }}
+            exit={{ opacity: 0, y: -20, x: '-50%' }}
+            className={cn(
+              "fixed top-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border backdrop-blur-xl animate-fade-in",
+              notification.type === 'success' && "bg-emerald-500/10 border-emerald-500/20 text-emerald-400",
+              notification.type === 'error' && "bg-rose-500/10 border-rose-500/20 text-rose-400",
+              notification.type === 'info' && "bg-primary/10 border-primary/20 text-primary"
+            )}
+          >
+            {notification.type === 'success' && <CheckCircle2 className="w-5 h-5" />}
+            {notification.type === 'error' && <AlertCircle className="w-5 h-5" />}
+            {notification.type === 'info' && <Info className="w-5 h-5" />}
+            <span className="text-sm font-semibold">{notification.message}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Sidebar: Navigation & Library */}
       <aside className={cn("sidebar", !isSidebarOpen && "w-0 overflow-hidden border-none")}>
         <div className="p-3">
