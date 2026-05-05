@@ -42,6 +42,9 @@ interface Message {
   timestamp: number
 }
 
+type ResponseStyle = 'balanced' | 'concise' | 'detailed' | 'friendly'
+type ResponseSpeed = 'fast' | 'normal' | 'slow'
+
 // --- API Client ---
 const api = axios.create({
   baseURL: '/api'
@@ -59,10 +62,16 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null)
+  const [responseStyle, setResponseStyle] = useState<ResponseStyle>('balanced')
+  const [responseSpeed, setResponseSpeed] = useState<ResponseSpeed>('normal')
+  const [typingMessageId, setTypingMessageId] = useState<string | null>(null)
   
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const formatMessageTime = (timestamp: number) =>
+    new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
   // Auto-dismiss notification
   useEffect(() => {
@@ -196,22 +205,57 @@ export default function App() {
     setError(null)
 
     try {
+      const styleInstructionMap: Record<ResponseStyle, string> = {
+        balanced: '',
+        concise: '\n\nPlease answer in a concise format with short bullet points.',
+        detailed: '\n\nPlease answer in detail with clear structure and practical examples.',
+        friendly: '\n\nPlease answer in a warm, conversational, encouraging tone.'
+      }
+
       const res = await api.post('/query', {
-        question: userMessage.content,
+        question: `${userMessage.content}${styleInstructionMap[responseStyle]}`,
         document_id: selectedDocId,
         top_k: 5
       })
 
+      const aiMessageId = (Date.now() + 1).toString()
       const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: aiMessageId,
         role: 'assistant',
-        content: res.data.answer,
+        content: '',
         sources: res.data.sources,
         timestamp: Date.now()
       }
       setMessages(prev => [...prev, aiMessage])
+      setTypingMessageId(aiMessageId)
+
+      const fullAnswer = res.data.answer || ''
+      const speedMap: Record<ResponseSpeed, number> = {
+        fast: 48,
+        normal: 24,
+        slow: 12
+      }
+      const charsPerTick = speedMap[responseSpeed]
+      let cursor = 0
+
+      await new Promise<void>((resolve) => {
+        const timer = window.setInterval(() => {
+          cursor = Math.min(cursor + charsPerTick, fullAnswer.length)
+          const nextChunk = fullAnswer.slice(0, cursor)
+          setMessages(prev =>
+            prev.map(msg => msg.id === aiMessageId ? { ...msg, content: nextChunk } : msg)
+          )
+
+          if (cursor >= fullAnswer.length) {
+            window.clearInterval(timer)
+            resolve()
+          }
+        }, 40)
+      })
+      setTypingMessageId(null)
     } catch (err: any) {
       setError(err.response?.data?.detail || "Query failed")
+      setTypingMessageId(null)
     } finally {
       setIsQuerying(false)
     }
@@ -339,6 +383,30 @@ export default function App() {
         {/* Mobile Header / Sidebar Toggle */}
         <header className="h-14 border-b border-white/5 flex items-center px-4 justify-between bg-bg-main">
           <div className="flex items-center gap-3">
+            {typingMessageId && (
+              <span className="text-[11px] text-emerald-400 font-medium animate-pulse">Antigravity is typing...</span>
+            )}
+            <select
+              value={responseStyle}
+              onChange={(e) => setResponseStyle(e.target.value as ResponseStyle)}
+              className="bg-white/5 border border-white/10 text-xs rounded-md px-2 py-1 text-white/80"
+              title="Response style"
+            >
+              <option value="balanced">Balanced</option>
+              <option value="friendly">Friendly</option>
+              <option value="concise">Concise</option>
+              <option value="detailed">Detailed</option>
+            </select>
+            <select
+              value={responseSpeed}
+              onChange={(e) => setResponseSpeed(e.target.value as ResponseSpeed)}
+              className="bg-white/5 border border-white/10 text-xs rounded-md px-2 py-1 text-white/80"
+              title="Typing speed style"
+            >
+              <option value="fast">Fast</option>
+              <option value="normal">Normal</option>
+              <option value="slow">Slow</option>
+            </select>
             <button 
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
               className="p-2 hover:bg-white/5 rounded-md text-white/60"
@@ -387,57 +455,65 @@ export default function App() {
                 <div 
                   key={msg.id || idx}
                   className={cn(
-                    "message-bubble animate-slide-in",
-                    msg.role === 'assistant' ? "assistant" : "user"
+                    "message-row animate-slide-in",
+                    msg.role === 'assistant' ? "assistant-row" : "user-row"
                   )}
                 >
-                  <div className="message-avatar">
-                    {msg.role === 'assistant' ? 'A' : <User className="w-4 h-4" />}
-                  </div>
-                  <div className="message-text">
-                    <p className={cn("text-[11px] font-bold uppercase tracking-widest mb-2 opacity-40")}>
-                      {msg.role === 'assistant' ? 'Antigravity' : 'You'}
-                    </p>
-                    <div className="prose prose-invert prose-sm max-w-none">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={{
-                          code({ node, inline, className, children, ...props }: any) {
-                            const match = /language-(\w+)/.exec(className || '')
-                            return !inline && match ? (
-                              <SyntaxHighlighter
-                                children={String(children).replace(/\n$/, '')}
-                                style={vscDarkPlus as any}
-                                language={match[1]}
-                                PreTag="div"
-                                className="rounded-xl !bg-[#0f0f0f] !p-4 border border-white/5 my-4"
-                                {...props}
-                              />
-                            ) : (
-                              <code className={cn("bg-white/10 px-1.5 py-0.5 rounded text-primary", className)} {...props}>
-                                {children}
-                              </code>
-                            )
-                          }
-                        }}
-                      >
-                        {msg.content}
-                      </ReactMarkdown>
+                  <div className={cn(
+                    "message-bubble",
+                    msg.role === 'assistant' ? "assistant" : "user"
+                  )}>
+                    <div className="message-avatar">
+                      {msg.role === 'assistant' ? 'A' : <User className="w-4 h-4" />}
                     </div>
-                    {msg.sources && msg.sources.length > 0 && (
-                      <div className="mt-6 flex flex-wrap gap-2">
-                        {msg.sources.map((src, i) => (
-                          <div 
-                            key={i}
-                            className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-[10px] flex items-center gap-2 hover:bg-white/10 transition-colors cursor-help"
-                            title={src.text}
-                          >
-                            <FileText className="w-3 h-3 text-white/40" />
-                            <span className="font-medium">{src.filename}</span>
-                          </div>
-                        ))}
+                    <div className="message-text">
+                      <div className="flex items-center gap-2 mb-2">
+                        <p className={cn("text-[11px] font-bold uppercase tracking-widest opacity-40")}>
+                          {msg.role === 'assistant' ? 'Antigravity' : 'You'}
+                        </p>
+                        <span className="text-[10px] text-white/30">{formatMessageTime(msg.timestamp)}</span>
                       </div>
-                    )}
+                      <div className="prose prose-invert prose-sm max-w-none">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            code({ node, inline, className, children, ...props }: any) {
+                              const match = /language-(\w+)/.exec(className || '')
+                              return !inline && match ? (
+                                <SyntaxHighlighter
+                                  children={String(children).replace(/\n$/, '')}
+                                  style={vscDarkPlus as any}
+                                  language={match[1]}
+                                  PreTag="div"
+                                  className="rounded-xl !bg-[#0f0f0f] !p-4 border border-white/5 my-4"
+                                  {...props}
+                                />
+                              ) : (
+                                <code className={cn("bg-white/10 px-1.5 py-0.5 rounded text-primary", className)} {...props}>
+                                  {children}
+                                </code>
+                              )
+                            }
+                          }}
+                        >
+                          {msg.content}
+                        </ReactMarkdown>
+                      </div>
+                      {msg.sources && msg.sources.length > 0 && (
+                        <div className="mt-6 flex flex-wrap gap-2">
+                          {msg.sources.map((src, i) => (
+                            <div
+                              key={i}
+                              className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-[10px] flex items-center gap-2 hover:bg-white/10 transition-colors cursor-help"
+                              title={src.text}
+                            >
+                              <FileText className="w-3 h-3 text-white/40" />
+                              <span className="font-medium">{src.filename}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
